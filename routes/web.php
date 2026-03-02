@@ -180,8 +180,8 @@ Route::post('/fix/suggest', function (Request $request) {
         return response()->json(['status' => 'success', ...$result]);
     } catch (\Illuminate\Validation\ValidationException $e) {
         return response()->json([
-            'status' => 'error',
-            'message' => collect($e->errors())->flatten()->first() ?? 'Validation failed.',
+            'message' => $e->getMessage(),
+            'errors'  => $e->errors(),
         ], 422);
     } catch (\Throwable $e) {
         logger()->error('Lens AI fix suggestion failed', ['error' => $e->getMessage()]);
@@ -270,8 +270,8 @@ Route::post('/fix/apply', function (Request $request) {
         return response()->json(['status' => 'success']);
     } catch (\Illuminate\Validation\ValidationException $e) {
         return response()->json([
-            'status' => 'error',
-            'message' => collect($e->errors())->flatten()->first() ?? 'Validation failed.',
+            'message' => $e->getMessage(),
+            'errors'  => $e->errors(),
         ], 422);
     } catch (\Throwable $e) {
         logger()->error('Lens AI fix apply failed', ['error' => $e->getMessage()]);
