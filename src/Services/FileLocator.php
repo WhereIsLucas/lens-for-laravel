@@ -85,23 +85,63 @@ class FileLocator
             'aria-label' => $this->extractAttribute($htmlSnippet, 'aria-label'),
             'title' => $this->extractAttribute($htmlSnippet, 'title'),
         ];
+        $targetClasses = $this->extractClassList($htmlSnippet);
+        $bestMatch = null;
 
         foreach ($finder as $file) {
             $contents = file_get_contents($file->getRealPath());
             $lines = preg_split('/\r?\n/', $contents);
 
             foreach ($lines as $index => $line) {
-                if ($this->isFrontendMatch($line, $tagName, $attributes, $selector)) {
-                    return [
+                $candidate = $this->frontendElementCandidate($lines, $index, $tagName);
+
+                if (! $candidate) {
+                    continue;
+                }
+
+                $score = $this->frontendMatchScore($candidate, $tagName, $attributes, $targetClasses, $selector);
+
+                if ($score <= 0) {
+                    continue;
+                }
+
+                if (! $bestMatch || $score > $bestMatch['score']) {
+                    $bestMatch = [
                         'file' => 'js/'.$file->getRelativePathname(),
                         'line' => $index + 1,
                         'type' => $this->sourceTypeForExtension($file->getExtension()),
+                        'score' => $score,
                     ];
                 }
             }
         }
 
-        return null;
+        if (! $bestMatch) {
+            return null;
+        }
+
+        unset($bestMatch['score']);
+
+        return $bestMatch;
+    }
+
+    protected function frontendElementCandidate(array $lines, int $index, string $tagName): ?string
+    {
+        if (stripos($lines[$index], '<'.$tagName) === false) {
+            return null;
+        }
+
+        $candidate = $lines[$index];
+
+        for ($i = $index + 1; $i < min(count($lines), $index + 12); $i++) {
+            if (str_contains($candidate, '>')) {
+                break;
+            }
+
+            $candidate .= "\n".$lines[$i];
+        }
+
+        return $candidate;
     }
 
     protected function frontendFilePatterns(): array
@@ -135,8 +175,7 @@ class FileLocator
         }
 
         // 4. Fallback: check if the line contains parts of the CSS selector (like class names or IDs)
-        preg_match_all('/[#\.]([a-zA-Z0-9\-_]+)/', $selector, $matches);
-        $selectorParts = $matches[1] ?? [];
+        $selectorParts = $this->selectorParts($selector);
 
         foreach ($selectorParts as $part) {
             if (stripos($line, $part) !== false) {
@@ -158,28 +197,55 @@ class FileLocator
      */
     protected function isFrontendMatch(string $line, string $tagName, array $attributes, string $selector): bool
     {
-        if (stripos($line, '<'.$tagName) === false) {
-            return false;
-        }
+        return $this->frontendMatchScore($line, $tagName, $attributes, [], $selector) > 0;
+    }
 
+    protected function frontendMatchScore(string $line, string $tagName, array $attributes, array $targetClasses, string $selector): int
+    {
         foreach ($attributes as $attribute => $value) {
             if ($value && $this->lineContainsFrontendAttribute($line, $attribute, $value)) {
-                return true;
+                return 100;
             }
         }
 
-        preg_match_all('/[#\.]([a-zA-Z0-9\-_]+)/', $selector, $matches);
-        $selectorParts = $matches[1] ?? [];
+        $score = 0;
+        foreach ($targetClasses as $class) {
+            if ($this->lineContainsClassToken($line, $class)) {
+                $score += 20;
+            }
+        }
+
+        if ($score > 0) {
+            return $score;
+        }
+
+        $selectorParts = $this->selectorParts($selector);
 
         foreach ($selectorParts as $part) {
             foreach ($this->selectorPartVariants($part) as $variant) {
                 if (stripos($line, $variant) !== false) {
-                    return true;
+                    $score += 1;
+                    break;
                 }
             }
         }
 
-        return empty(array_filter($attributes)) && empty($selectorParts);
+        if ($score > 0) {
+            return $score;
+        }
+
+        return empty(array_filter($attributes)) && empty($targetClasses) && empty($selectorParts) ? 1 : 0;
+    }
+
+    protected function lineContainsClassToken(string $line, string $class): bool
+    {
+        foreach ($this->selectorPartVariants($class) as $variant) {
+            if (stripos($line, $variant) !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function selectorPartVariants(string $part): array
@@ -191,6 +257,27 @@ class FileLocator
             $camel,
             ucfirst((string) $camel),
         ])));
+    }
+
+    protected function selectorParts(string $selector): array
+    {
+        preg_match_all('/[#\.]((?:\\\\.|[a-zA-Z0-9\-_])+)/', $selector, $matches);
+
+        return array_values(array_unique(array_map(
+            fn ($part) => str_replace('\\:', ':', $part),
+            $matches[1] ?? []
+        )));
+    }
+
+    protected function extractClassList(string $html): array
+    {
+        $class = $this->extractAttribute($html, 'class');
+
+        if (! $class) {
+            return [];
+        }
+
+        return array_values(array_filter(preg_split('/\s+/', trim($class)) ?: []));
     }
 
     protected function lineContainsFrontendAttribute(string $line, string $attribute, string $value): bool

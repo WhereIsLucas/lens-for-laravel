@@ -222,3 +222,65 @@ test('locates vue class object entries by selector part', function () {
         ->and($result['file'])->toBe('js/Components/LensLocatorTest.vue')
         ->and($result['line'])->toBe(2);
 });
+
+test('locates multiline vue anchor by escaped tailwind selector class', function () {
+    file_put_contents(
+        $this->vueFile,
+        "<template>\n".
+        "    <a\n".
+        "        :href=\"social.url\"\n".
+        "        target=\"_blank\"\n".
+        "        class=\"group border border-slate-300 p-2 duration-200 hover:bg-slate-900\"\n".
+        "    >\n".
+        "        <GithubIcon />\n".
+        "    </a>\n".
+        "</template>\n"
+    );
+
+    $result = (new FileLocator)->locate(
+        '<a class="group border border-slate-300 p-2 duration-200 hover:bg-slate-900" href="https://github.com/jakub-lipinski" target="_blank">',
+        '.group.p-2.hover\:bg-slate-900:nth-child(1)'
+    );
+
+    expect($result)->not->toBeNull()
+        ->and($result['file'])->toBe('js/Components/LensLocatorTest.vue')
+        ->and($result['line'])->toBe(2)
+        ->and($result['type'])->toBe('vue');
+});
+
+test('prefers target node classes over ancestor selector classes across vue files', function () {
+    file_put_contents(
+        $this->vueFile,
+        "<template>\n".
+        "    <nav class=\"sticky top-0 mx-auto grid max-w-360 grid-cols-12 bg-white\">\n".
+        "        <span class=\"font-sans text-lg font-medium uppercase\">Portfolio</span>\n".
+        "    </nav>\n".
+        "</template>\n"
+    );
+
+    $home = $this->jsPath.'/Pages/Home.vue';
+    if (! is_dir(dirname($home))) {
+        mkdir(dirname($home), 0755, true);
+    }
+
+    file_put_contents(
+        $home,
+        "<template>\n".
+        "    <div class=\"h-full border-b border-slate-300 p-8 tracking-wider md:p-12 lg:flex lg:flex-col\">\n".
+        "        <span class=\"mb-2 inline-block font-mono text-slate-400 uppercase lg:mt-auto\">Core stack</span>\n".
+        "    </div>\n".
+        "</template>\n"
+    );
+
+    $result = (new FileLocator)->locate(
+        '<span class="mb-2 inline-block font-mono text-slate-400 uppercase lg:mt-auto">Core stack</span>',
+        '.h-full.lg\:flex.lg\:flex-col:nth-child(2) > .mb-2.lg\:mt-auto.inline-block'
+    );
+
+    expect($result)->not->toBeNull()
+        ->and($result['file'])->toBe('js/Pages/Home.vue')
+        ->and($result['line'])->toBe(3)
+        ->and($result['type'])->toBe('vue');
+
+    unlink($home);
+});
